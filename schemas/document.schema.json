@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fabrika-gipotez.local/schemas/document.schema.json",
+  "title": "Document",
+  "description": "Выход модуля ingestion -> вход rag_core. Один нормализованный документ базы знаний (статья, патент, регламент, отчёт по хвостам и т.п.), извлечённый из xlsx/docx/pdf/png.",
+  "type": "object",
+  "required": ["doc_id", "source_type", "title", "language", "full_text", "sections", "metadata"],
+  "additionalProperties": false,
+  "properties": {
+    "doc_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Уникальный идентификатор документа (UUID)."
+    },
+    "source_type": {
+      "type": "string",
+      "enum": ["article", "patent", "report", "other"],
+      "description": "Тип источника документа."
+    },
+    "title": {
+      "type": "string",
+      "description": "Заголовок документа. Если не удалось извлечь — имя файла."
+    },
+    "authors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Список авторов, если применимо (может быть пустым)."
+    },
+    "date": {
+      "type": ["string", "null"],
+      "description": "Дата документа в формате ISO 8601 (YYYY-MM-DD), либо null если неизвестна."
+    },
+    "language": {
+      "type": "string",
+      "description": "Код языка документа (ru, en, ...)."
+    },
+    "full_text": {
+      "type": "string",
+      "description": "Полный извлечённый текст документа (конкатенация секций)."
+    },
+    "sections": {
+      "type": "array",
+      "description": "Разбиение документа на секции по заголовкам/страницам.",
+      "items": {
+        "type": "object",
+        "required": ["heading", "text", "page_range"],
+        "additionalProperties": false,
+        "properties": {
+          "heading": { "type": "string", "description": "Заголовок секции (может быть пустой строкой)." },
+          "text": { "type": "string", "description": "Текст секции." },
+          "page_range": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Диапазон страниц [start, end], нумерация с 1."
+          }
+        }
+      }
+    },
+    "tables": {
+      "type": "array",
+      "default": [],
+      "description": "Таблицы, извлечённые из документа (например, из xlsx или таблиц в pdf).",
+      "items": {
+        "type": "object",
+        "required": ["caption", "data", "page"],
+        "additionalProperties": false,
+        "properties": {
+          "caption": { "type": "string", "description": "Подпись/название таблицы, может быть пустой строкой." },
+          "data": {
+            "type": "array",
+            "description": "Строки таблицы; каждая строка — массив ячеек в виде строк.",
+            "items": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "page": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "description": "Номер страницы (null для xlsx-листов без страниц)."
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["file_name", "file_type"],
+      "additionalProperties": false,
+      "properties": {
+        "file_name": { "type": "string", "description": "Исходное имя файла." },
+        "file_type": {
+          "type": "string",
+          "enum": ["xlsx", "docx", "pdf", "png", "jpg", "other"],
+          "description": "Тип исходного файла."
+        },
+        "ocr_confidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Средняя уверенность OCR (0..1), null если OCR не применялся."
+        },
+        "extra": {
+          "type": "object",
+          "description": "Произвольные дополнительные метаданные (например, число листов xlsx, DPI скана).",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fabrika-gipotez.local/schemas/raw_hypotheses.schema.json",
+  "title": "RawHypotheses",
+  "description": "Выход модуля hypothesis_gen -> вход ranking. Список сгенерированных LLM гипотез до ранжирования.",
+  "type": "object",
+  "required": ["hypotheses"],
+  "additionalProperties": false,
+  "properties": {
+    "hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["hyp_id", "statement", "mechanism", "sources", "target_property_impact", "raw_llm_novelty_note"],
+        "additionalProperties": false,
+        "properties": {
+          "hyp_id": { "type": "string", "format": "uuid", "description": "Уникальный идентификатор гипотезы." },
+          "statement": { "type": "string", "description": "Формулировка гипотезы одним-двумя предложениями." },
+          "mechanism": { "type": "string", "description": "Предполагаемый механизм/объяснение, почему гипотеза должна сработать." },
+          "sources": {
+            "type": "array",
+            "default": [],
+            "description": "Ссылки на источники, на основе которых сгенерирована гипотеза.",
+            "items": {
+              "type": "object",
+              "required": ["doc_id", "chunk_id", "citation"],
+              "additionalProperties": false,
+              "properties": {
+                "doc_id": { "type": "string", "format": "uuid", "description": "Идентификатор документа-источника." },
+                "chunk_id": { "type": "string", "format": "uuid", "description": "Идентификатор чанка-источника." },
+                "citation": { "type": "string", "description": "Человекочитаемая ссылка на источник." }
+              }
+            }
+          },
+          "target_property_impact": {
+            "type": "string",
+            "description": "Ожидаемое влияние на целевое свойство (текстовое описание, например '+10-15% извлечения')."
+          },
+          "raw_llm_novelty_note": {
+            "type": "string",
+            "description": "Свободный комментарий модели о новизне гипотезы (черновой, до расчёта итоговых scores в ranking)."
+          }
+        }
+      }
+    }
+  }
+}

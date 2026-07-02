@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fabrika-gipotez.local/schemas/retrieval_result.schema.json",
+  "title": "RetrievalResult",
+  "description": "Выход модуля rag_core -> вход hypothesis_gen. Результат поиска релевантных фрагментов знаний по запросу.",
+  "type": "object",
+  "required": ["query", "retrieved_chunks"],
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "type": "object",
+      "required": ["target_property", "constraints"],
+      "additionalProperties": false,
+      "properties": {
+        "target_property": {
+          "type": "string",
+          "description": "Целевое технологическое свойство, которое нужно улучшить (например, 'повысить извлечение золота из хвостов на 15%')."
+        },
+        "constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "materials": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": [],
+              "description": "Доступное сырьё/реагенты."
+            },
+            "budget": {
+              "type": ["string", "number", "null"],
+              "description": "Бюджетное ограничение (сумма или текстовое описание), null если не задано."
+            },
+            "equipment": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": [],
+              "description": "Доступное оборудование."
+            },
+            "regulatory": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": [],
+              "description": "Регуляторные/нормативные ограничения."
+            }
+          }
+        }
+      }
+    },
+    "retrieved_chunks": {
+      "type": "array",
+      "description": "Список найденных релевантных фрагментов текста из базы знаний.",
+      "items": {
+        "type": "object",
+        "required": ["chunk_id", "doc_id", "text", "similarity", "entities", "source_citation"],
+        "additionalProperties": false,
+        "properties": {
+          "chunk_id": { "type": "string", "format": "uuid", "description": "Уникальный идентификатор чанка." },
+          "doc_id": { "type": "string", "format": "uuid", "description": "Идентификатор документа-источника (см. document.schema.json)." },
+          "text": { "type": "string", "description": "Текст фрагмента." },
+          "similarity": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Оценка релевантности/косинусной близости к запросу (0..1)."
+          },
+          "entities": {
+            "type": "array",
+            "default": [],
+            "description": "Извлечённые из чанка именованные сущности.",
+            "items": {
+              "type": "object",
+              "required": ["type", "value"],
+              "additionalProperties": false,
+              "properties": {
+                "type": { "type": "string", "description": "Тип сущности (material, process, parameter, equipment, ...)." },
+                "value": { "type": "string", "description": "Значение сущности." }
+              }
+            }
+          },
+          "source_citation": {
+            "type": "string",
+            "description": "Человекочитаемая ссылка на источник (например, 'Иванов и др., 2019, стр. 12')."
+          }
+        }
+      }
+    },
+    "graph_context": {
+      "type": "object",
+      "description": "Опциональный граф связей сущностей для дополнительного контекста. Может быть пустым.",
+      "default": { "nodes": [], "edges": [] },
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "object" }
+        },
+        "edges": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "object" }
+        }
+      }
+    }
+  }
+}

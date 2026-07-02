@@ -1,0 +1,29 @@
+# Общие
+jsonschema>=4.20
+python-dotenv>=1.0
+pytest>=8.0
+
+# ingestion
+python-docx>=1.1
+pdfplumber>=0.11
+openpyxl>=3.1
+# OCR (модуль ingestion, TODO) - раскомментировать при реализации:
+# pytesseract>=0.3.10
+# Pillow>=10.0
+
+# rag_core
+scikit-learn>=1.4
+numpy>=1.26
+
+# hypothesis_gen
+openai>=1.30
+
+# ranking
+# (numpy уже объявлен выше)
+
+# orchestrator_ui
+streamlit>=1.33
+pandas>=2.2
+
+# используется в тестах ingestion для генерации фикстур .pdf
+reportlab>=4.1

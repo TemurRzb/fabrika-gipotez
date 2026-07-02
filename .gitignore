@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Env files with secrets
+.env
+.env.*
+!.env.example
+
+# Test / cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Streamlit
+.streamlit/
+
+# Модели / кэши эмбеддингов
+.cache/
+models/
+*.faiss
+*.index
+
+# Данные (кроме мок-данных, которые версионируются)
+/data/
+*.log
+
+# Исходные материалы задачи (большие бинарники, не для git)
+/Задача 1/

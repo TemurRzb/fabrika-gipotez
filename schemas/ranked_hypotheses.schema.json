@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fabrika-gipotez.local/schemas/ranked_hypotheses.schema.json",
+  "title": "RankedHypotheses",
+  "description": "Выход модуля ranking -> вход orchestrator_ui. Финальный список гипотез со scores, рисками и дорожной картой проверки.",
+  "type": "object",
+  "required": ["hypotheses"],
+  "additionalProperties": false,
+  "properties": {
+    "hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["hyp_id", "statement", "mechanism", "sources", "scores", "risk_notes", "roadmap"],
+        "additionalProperties": false,
+        "properties": {
+          "hyp_id": { "type": "string", "format": "uuid", "description": "Уникальный идентификатор гипотезы (совпадает с raw_hypotheses)." },
+          "statement": { "type": "string", "description": "Формулировка гипотезы." },
+          "mechanism": { "type": "string", "description": "Предполагаемый механизм действия." },
+          "sources": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "object",
+              "required": ["doc_id", "citation"],
+              "additionalProperties": false,
+              "properties": {
+                "doc_id": { "type": "string", "format": "uuid", "description": "Идентификатор документа-источника." },
+                "citation": { "type": "string", "description": "Человекочитаемая ссылка на источник." }
+              }
+            }
+          },
+          "scores": {
+            "type": "object",
+            "required": ["novelty", "feasibility", "expected_value", "risk", "overall"],
+            "additionalProperties": false,
+            "description": "Все оценки нормированы в диапазоне 0..1 (кроме overall, тоже 0..1, агрегирующего остальные).",
+            "properties": {
+              "novelty": { "type": "number", "minimum": 0, "maximum": 1, "description": "Оценка новизны гипотезы." },
+              "feasibility": { "type": "number", "minimum": 0, "maximum": 1, "description": "Оценка практической реализуемости." },
+              "expected_value": { "type": "number", "minimum": 0, "maximum": 1, "description": "Оценка ожидаемой ценности/эффекта." },
+              "risk": { "type": "number", "minimum": 0, "maximum": 1, "description": "Оценка риска (0 - низкий риск, 1 - высокий)." },
+              "overall": { "type": "number", "minimum": 0, "maximum": 1, "description": "Итоговый агрегированный скор для сортировки." }
+            }
+          },
+          "risk_notes": {
+            "type": "string",
+            "description": "Пояснение основных рисков гипотезы."
+          },
+          "roadmap": {
+            "type": "array",
+            "default": [],
+            "description": "Опциональная дорожная карта проверки гипотезы (может быть пустым массивом).",
+            "items": {
+              "type": "object",
+              "required": ["step", "resources", "success_criteria"],
+              "additionalProperties": false,
+              "properties": {
+                "step": { "type": "string", "description": "Описание шага проверки." },
+                "resources": { "type": "string", "description": "Необходимые ресурсы для шага." },
+                "success_criteria": { "type": "string", "description": "Критерий успеха шага." }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
