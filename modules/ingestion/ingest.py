@@ -7,21 +7,74 @@
 Статус на сейчас:
   - .docx: работает (python-docx)
   - .pdf с текстовым слоем: работает (pdfplumber)
-  - .xlsx: заглушка (TODO)
-  - .png/.jpg сканы (OCR): заглушка (TODO)
+  - .pdf-сканы/фото (нет текстового слоя): работает через OCR постранично
+    (pypdfium2 рендерит страницу в изображение, Tesseract распознаёт текст)
+  - .png/.jpg сканы/схемы: работает через OCR (pytesseract)
+  - .xlsx: работает (openpyxl) — каждый лист становится одной таблицей в
+    tables[] с сырыми данными ячеек; для полнотекстового поиска все непустые
+    ячейки листа также собираются в один section.text
+
+OCR требует системный движок Tesseract:
+  - Windows: winget install --id UB-Mannheim.TesseractOCR
+  - Codespaces/Debian: sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
+См. README.md модуля, раздел "OCR", если Tesseract не находится автоматически.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import uuid
 from pathlib import Path
 from typing import Any
 
 import docx  # python-docx
+import openpyxl
 import pdfplumber
+import pytesseract
+from PIL import Image
+
+# Порог: если на странице pdf извлечено меньше символов текста, чем это значение,
+# считаем страницу сканом/фото (а не набранным текстом) и запускаем OCR.
+_MIN_TEXT_CHARS_PER_PAGE = 20
+# DPI рендеринга страницы pdf в изображение перед OCR — компромисс между
+# качеством распознавания и скоростью.
+_PDF_OCR_RESOLUTION = 200
+_TESSERACT_LANG = "rus+eng"
+
+# На Windows winget-инсталлятор Tesseract не всегда кладёт исполняемый файл в PATH.
+# Если tesseract не найден в PATH, но стоит в дефолтную папку — используем её явно.
+_DEFAULT_WINDOWS_TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+if shutil.which("tesseract") is None and os.path.exists(_DEFAULT_WINDOWS_TESSERACT_CMD):
+    pytesseract.pytesseract.tesseract_cmd = _DEFAULT_WINDOWS_TESSERACT_CMD
 
 
 def _new_id() -> str:
     return str(uuid.uuid4())
+
+
+def _ocr_image(image: "Image.Image") -> tuple[str, float]:
+    """Распознаёт текст на изображении через Tesseract OCR.
+
+    Возвращает (распознанный_текст, средняя_уверенность 0..1). Уверенность
+    считается по словам с conf >= 0 (Tesseract отдаёт -1 для служебных блоков).
+    """
+    data = pytesseract.image_to_data(image, lang=_TESSERACT_LANG, output_type=pytesseract.Output.DICT)
+
+    words: list[str] = []
+    confidences: list[float] = []
+    for word, conf_raw in zip(data["text"], data["conf"]):
+        word = word.strip()
+        try:
+            conf = float(conf_raw)
+        except ValueError:
+            continue
+        if word and conf >= 0:
+            words.append(word)
+            confidences.append(conf)
+
+    text = " ".join(words)
+    avg_confidence = (sum(confidences) / len(confidences) / 100.0) if confidences else 0.0
+    return text, avg_confidence
 
 
 def _ingest_docx(file_path: Path) -> dict[str, Any]:
@@ -85,13 +138,25 @@ def _ingest_docx(file_path: Path) -> dict[str, Any]:
     }
 
 
-def _ingest_pdf(file_path: Path) -> dict[str, Any]:
+def _ingest_pdf(file_path: Path, max_pages: int | None = None) -> dict[str, Any]:
     sections: list[dict[str, Any]] = []
     tables: list[dict[str, Any]] = []
+    ocr_confidences: list[float] = []
 
     with pdfplumber.open(str(file_path)) as pdf:
-        for page_number, page in enumerate(pdf.pages, start=1):
+        pages = pdf.pages if max_pages is None else pdf.pages[:max_pages]
+        for page_number, page in enumerate(pages, start=1):
             text = (page.extract_text() or "").strip()
+
+            if len(text) < _MIN_TEXT_CHARS_PER_PAGE:
+                # Текстового слоя почти нет — вероятно, страница это фото/скан
+                # (см. "Дополнительные материалы" в задаче), а не набранный текст.
+                # Рендерим страницу в изображение (pypdfium2, без системных
+                # зависимостей вроде poppler) и распознаём через Tesseract.
+                rendered_image = page.to_image(resolution=_PDF_OCR_RESOLUTION).original
+                text, confidence = _ocr_image(rendered_image)
+                ocr_confidences.append(confidence)
+
             if text:
                 sections.append(
                     {
@@ -105,8 +170,71 @@ def _ingest_pdf(file_path: Path) -> dict[str, Any]:
                 tables.append({"caption": "", "data": rows, "page": page_number})
 
     if not sections:
-        # Текстового слоя нет — вероятно, скан. Это НЕ ошибка ingestion как такового,
-        # но за пределами MVP: см. NotImplementedError в _ingest_scan для явного OCR-пути.
+        sections = [{"heading": "", "text": "", "page_range": [1, 1]}]
+
+    full_text = "\n\n".join(s["text"] for s in sections if s["text"])
+    avg_ocr_confidence = (
+        round(sum(ocr_confidences) / len(ocr_confidences), 4) if ocr_confidences else None
+    )
+
+    return {
+        "doc_id": _new_id(),
+        "source_type": "other",
+        "title": file_path.stem,
+        "authors": [],
+        "date": None,
+        "language": "ru",
+        "full_text": full_text,
+        "sections": sections,
+        "tables": tables,
+        "metadata": {
+            "file_name": file_path.name,
+            "file_type": "pdf",
+            "ocr_confidence": avg_ocr_confidence,
+            "extra": {"pages_total": len(sections), "ocr_pages": len(ocr_confidences)},
+        },
+    }
+
+
+def _format_xlsx_cell(cell: Any) -> str:
+    if cell is None:
+        return ""
+    if isinstance(cell, float):
+        # 6 значащих цифр вместо полной точности float (например, вместо
+        # "4.9191001807039534e-05" — "4.9191e-05"). Реальные xlsx отчётов
+        # часто содержат формулы вроде "=B2/B10*100", которые openpyxl
+        # (data_only=True) отдаёт как посчитанный float с длинным хвостом.
+        return f"{cell:.6g}"
+    return str(cell)
+
+
+def _ingest_xlsx(file_path: Path) -> dict[str, Any]:
+    """Каждый лист становится одной таблицей в tables[] (caption = имя листа,
+    page=None — у xlsx нет страниц). Непустые ячейки листа также собираются в
+    section.text для полнотекстового поиска (см. rag_core)."""
+    workbook = openpyxl.load_workbook(str(file_path), data_only=True, read_only=True)
+
+    sections: list[dict[str, Any]] = []
+    tables: list[dict[str, Any]] = []
+
+    for sheet in workbook.worksheets:
+        rows: list[list[str]] = []
+        sheet_text_parts: list[str] = []
+        for row in sheet.iter_rows(values_only=True):
+            cells = [_format_xlsx_cell(cell) for cell in row]
+            rows.append(cells)
+            sheet_text_parts.extend(c for c in cells if c)
+
+        tables.append({"caption": sheet.title, "data": rows, "page": None})
+        sections.append(
+            {
+                "heading": sheet.title,
+                "text": " ".join(sheet_text_parts),
+                "page_range": [1, 1],
+            }
+        )
+
+    if not sections:
         sections = [{"heading": "", "text": "", "page_range": [1, 1]}]
 
     full_text = "\n\n".join(s["text"] for s in sections if s["text"])
@@ -123,32 +251,48 @@ def _ingest_pdf(file_path: Path) -> dict[str, Any]:
         "tables": tables,
         "metadata": {
             "file_name": file_path.name,
-            "file_type": "pdf",
+            "file_type": "xlsx",
             "ocr_confidence": None,
-            "extra": {"pages_total": len(sections)},
+            "extra": {"sheet_count": len(workbook.worksheets)},
         },
     }
 
 
-def _ingest_xlsx(file_path: Path) -> dict[str, Any]:
-    raise NotImplementedError(
-        "xlsx ingestion ещё не реализован. TODO: читать через openpyxl "
-        "(лист -> tables[].data, caption = имя листа), page=None для xlsx. "
-        "Смотри пример структуры в mock_data/documents/doc_report_tailings.json."
-    )
-
-
 def _ingest_scan(file_path: Path) -> dict[str, Any]:
-    raise NotImplementedError(
-        "OCR для сканов (png/jpg) ещё не реализован. TODO: подключить pytesseract "
-        "или Yandex OCR API, заполнить metadata.ocr_confidence реальным значением "
-        "(не null), сложить распознанный текст в один section с heading=''. "
-        "Смотри пример структуры в mock_data/documents/doc_patent_flotation_reagent.json."
-    )
+    """OCR для png/jpg — схемы, регламенты, списки оборудования и т.п.
+    Основной ценный контент таких файлов часто графический (схема флотации),
+    а OCR извлекает подписи/текстовые блоки, которые на ней есть."""
+    image = Image.open(file_path).convert("RGB")
+    text, confidence = _ocr_image(image)
+
+    suffix = file_path.suffix.lower()
+    file_type = "jpg" if suffix in (".jpg", ".jpeg") else "png"
+
+    return {
+        "doc_id": _new_id(),
+        "source_type": "other",
+        "title": file_path.stem,
+        "authors": [],
+        "date": None,
+        "language": "ru",
+        "full_text": text,
+        "sections": [{"heading": "", "text": text, "page_range": [1, 1]}],
+        "tables": [],
+        "metadata": {
+            "file_name": file_path.name,
+            "file_type": file_type,
+            "ocr_confidence": round(confidence, 4),
+            "extra": {"ocr_engine": "tesseract"},
+        },
+    }
 
 
-def ingest(file_path: str) -> dict[str, Any]:
-    """Парсит файл и возвращает dict, валидный по document.schema.json."""
+def ingest(file_path: str, max_pages: int | None = None) -> dict[str, Any]:
+    """Парсит файл и возвращает dict, валидный по document.schema.json.
+
+    max_pages: ограничить число обрабатываемых страниц pdf (полезно для быстрой
+    проверки на больших сканированных pdf, где OCR всех страниц может быть долгим).
+    """
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Файл не найден: {file_path}")
@@ -157,7 +301,7 @@ def ingest(file_path: str) -> dict[str, Any]:
     if suffix == ".docx":
         return _ingest_docx(path)
     if suffix == ".pdf":
-        return _ingest_pdf(path)
+        return _ingest_pdf(path, max_pages=max_pages)
     if suffix == ".xlsx":
         return _ingest_xlsx(path)
     if suffix in (".png", ".jpg", ".jpeg"):
@@ -170,9 +314,10 @@ if __name__ == "__main__":
     import json
     import sys
 
-    if len(sys.argv) != 2:
-        print("Использование: python ingest.py <path_to_file>")
+    if len(sys.argv) not in (2, 3):
+        print("Использование: python ingest.py <path_to_file> [max_pages]")
         raise SystemExit(2)
 
-    result = ingest(sys.argv[1])
+    max_pages_arg = int(sys.argv[2]) if len(sys.argv) == 3 else None
+    result = ingest(sys.argv[1], max_pages=max_pages_arg)
     print(json.dumps(result, ensure_ascii=False, indent=2))

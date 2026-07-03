@@ -7,9 +7,14 @@ pytest>=8.0
 python-docx>=1.1
 pdfplumber>=0.11
 openpyxl>=3.1
-# OCR (модуль ingestion, TODO) - раскомментировать при реализации:
-# pytesseract>=0.3.10
-# Pillow>=10.0
+# OCR сканов/фото (png/jpg) и сканированных страниц pdf.
+# Требует системный движок Tesseract (см. modules/ingestion/README.md, раздел OCR):
+#   Windows: winget install --id UB-Mannheim.TesseractOCR
+#   Codespaces/Debian: sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
+pytesseract>=0.3.10
+Pillow>=10.0
+# рендеринг страниц pdf в изображение для OCR сканированных pdf (без системных зависимостей типа poppler)
+pypdfium2>=4.30
 
 # rag_core
 scikit-learn>=1.4
