@@ -10,7 +10,8 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 from reportlab.pdfgen import canvas
 
-from modules.ingestion.ingest import ingest
+from modules.ingestion.ingest import ingest, ingest_folder
+from modules.rag_core.retrieve import retrieve
 from schemas.validate_schema import validate
 
 
@@ -118,3 +119,67 @@ def test_ingest_pdf_scan_triggers_ocr(tmp_path):
     validate(result, "document")
     assert result["metadata"]["ocr_confidence"] is not None
     assert "SULFIDE" in result["full_text"].upper()
+
+
+def _make_sample_folder(folder):
+    docx_path = folder / "report.docx"
+    document = docx.Document()
+    document.add_heading("Вещественный состав хвостов", level=1)
+    document.add_paragraph("Хвосты содержат тонковкрапленное золото, ассоциированное с сульфидами.")
+    document.save(str(docx_path))
+
+    xlsx_path = folder / "tailings.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Хвосты"
+    sheet.append(["Класс крупности, мкм", "Содержание Ni, %"])
+    sheet.append(["-125+71", "0.46"])
+    workbook.save(str(xlsx_path))
+
+    # временный Excel-лок должен игнорироваться ingest_folder
+    (folder / "~$tailings.xlsx").write_bytes(b"")
+    # неподдерживаемый формат должен игнорироваться молча
+    (folder / "notes.txt").write_text("не документ базы знаний", encoding="utf-8")
+
+
+def test_ingest_folder_caches_results_between_runs(tmp_path):
+    source_folder = tmp_path / "source"
+    source_folder.mkdir()
+    _make_sample_folder(source_folder)
+    cache_dir = tmp_path / "cache"
+
+    first_run = ingest_folder(str(source_folder), cache_dir=str(cache_dir))
+    assert len(first_run) == 2  # docx + xlsx; ~$-лок и .txt пропущены
+
+    cached_files = list(cache_dir.glob("*.json"))
+    assert len(cached_files) == 2
+
+    second_run = ingest_folder(str(source_folder), cache_dir=str(cache_dir))
+    # doc_id — новый uuid4 при каждом реальном парсинге; если он совпал между
+    # запусками, значит второй запуск действительно взял результат из кэша,
+    # а не распарсил файлы заново.
+    assert {d["doc_id"] for d in first_run} == {d["doc_id"] for d in second_run}
+
+    for doc in second_run:
+        validate(doc, "document")
+
+
+def test_ingest_folder_output_feeds_rag_core_without_errors(tmp_path):
+    source_folder = tmp_path / "source"
+    source_folder.mkdir()
+    _make_sample_folder(source_folder)
+    cache_dir = tmp_path / "cache"
+
+    documents = ingest_folder(str(source_folder), cache_dir=str(cache_dir))
+
+    # Формулировка нарочно пересекается по словам с текстом в report.docx
+    # ("тонковкрапленное золото... ассоциированное с сульфидами") — TF-IDF
+    # ищет по точному совпадению словоформ, а не по смыслу (см. README rag_core).
+    query = {
+        "target_property": "тонковкрапленное золото, ассоциированное с сульфидами в хвостах",
+        "constraints": {"materials": [], "budget": None, "equipment": [], "regulatory": []},
+    }
+    retrieval_result = retrieve(query, documents)
+
+    validate(retrieval_result, "retrieval_result")
+    assert len(retrieval_result["retrieved_chunks"]) > 0

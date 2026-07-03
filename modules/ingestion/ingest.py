@@ -14,6 +14,11 @@
     tables[] с сырыми данными ячеек; для полнотекстового поиска все непустые
     ячейки листа также собираются в один section.text
 
+Также есть ingest_folder(folder_path, cache_dir) — обрабатывает всю папку
+рекурсивно с кэшированием результата на диске (см. докстринг функции), чтобы
+не перепарсивать (и не перезапускать OCR) одни и те же файлы при повторных
+запусках пайплайна.
+
 OCR требует системный движок Tesseract:
   - Windows: winget install --id UB-Mannheim.TesseractOCR
   - Codespaces/Debian: sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
@@ -21,8 +26,11 @@ OCR требует системный движок Tesseract:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -32,6 +40,9 @@ import openpyxl
 import pdfplumber
 import pytesseract
 from PIL import Image
+
+_SUPPORTED_EXTENSIONS = {".docx", ".pdf", ".xlsx", ".png", ".jpg", ".jpeg"}
+_DEFAULT_CACHE_DIR = "data/parsed_documents"
 
 # Порог: если на странице pdf извлечено меньше символов текста, чем это значение,
 # считаем страницу сканом/фото (а не набранным текстом) и запускаем OCR.
@@ -310,14 +321,80 @@ def ingest(file_path: str, max_pages: int | None = None) -> dict[str, Any]:
     raise ValueError(f"Неподдерживаемый тип файла: {suffix}")
 
 
+def _cache_key(file_path: Path) -> str:
+    """Ключ кэша на основе пути+mtime+размера файла (без чтения содержимого —
+    быстро даже для больших сканов). Меняется, если файл изменился/переместился,
+    что автоматически инвалидирует старый кэш для этого файла."""
+    stat = file_path.stat()
+    raw = f"{file_path.resolve()}|{stat.st_mtime_ns}|{stat.st_size}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def ingest_folder(
+    folder_path: str,
+    cache_dir: str = _DEFAULT_CACHE_DIR,
+    max_pages: int | None = None,
+) -> list[dict[str, Any]]:
+    """Рекурсивно обрабатывает все поддерживаемые файлы в папке, с кэшированием
+    результата на диске в cache_dir (один JSON-файл на исходный документ).
+
+    Кэш-ключ строится из пути+времени изменения+размера файла: если файл не
+    менялся с прошлого запуска — результат берётся из кэша без повторного
+    парсинга/OCR, что критично для больших сканированных pdf. Если исходный
+    файл изменился (или это первый запуск) — файл парсится через ingest() и
+    результат сохраняется в кэш.
+
+    Файлы неподдерживаемых форматов и временные Excel-локи (~$...) пропускаются
+    молча. Ошибки парсинга отдельных файлов не прерывают обработку остальных —
+    печатаются в stderr и пропускаются.
+
+    Возвращает список dict, валидных по document.schema.json (порядок — по
+    отсортированному пути файла, для стабильности между запусками).
+    """
+    folder = Path(folder_path)
+    cache = Path(cache_dir)
+    cache.mkdir(parents=True, exist_ok=True)
+
+    documents: list[dict[str, Any]] = []
+
+    for file_path in sorted(folder.rglob("*")):
+        if not file_path.is_file() or file_path.name.startswith("~$"):
+            continue
+        if file_path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+            continue
+
+        cache_file = cache / f"{_cache_key(file_path)}.json"
+
+        if cache_file.exists():
+            documents.append(json.loads(cache_file.read_text(encoding="utf-8")))
+            continue
+
+        try:
+            result = ingest(str(file_path), max_pages=max_pages)
+        except Exception as e:  # noqa: BLE001 - не должно прерывать обработку остальной папки
+            print(f"[ingest_folder] пропуск {file_path.name}: {e}", file=sys.stderr)
+            continue
+
+        cache_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        documents.append(result)
+
+    return documents
+
+
 if __name__ == "__main__":
-    import json
-    import sys
+    import argparse
 
-    if len(sys.argv) not in (2, 3):
-        print("Использование: python ingest.py <path_to_file> [max_pages]")
-        raise SystemExit(2)
+    parser = argparse.ArgumentParser(description="Парсинг файла или папки в document.schema.json")
+    parser.add_argument("path", help="Путь к файлу или папке")
+    parser.add_argument("--folder", action="store_true", help="Обработать path как папку (ingest_folder)")
+    parser.add_argument("--cache-dir", default=_DEFAULT_CACHE_DIR, help="Папка кэша (только для --folder)")
+    parser.add_argument("--max-pages", type=int, default=None, help="Ограничение страниц pdf")
+    args = parser.parse_args()
 
-    max_pages_arg = int(sys.argv[2]) if len(sys.argv) == 3 else None
-    result = ingest(sys.argv[1], max_pages=max_pages_arg)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.folder:
+        docs = ingest_folder(args.path, cache_dir=args.cache_dir, max_pages=args.max_pages)
+        print(f"Обработано документов: {len(docs)} (кэш: {args.cache_dir})", file=sys.stderr)
+        print(json.dumps(docs, ensure_ascii=False, indent=2))
+    else:
+        result = ingest(args.path, max_pages=args.max_pages)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
