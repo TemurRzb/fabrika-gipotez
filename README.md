@@ -28,76 +28,86 @@
                                                         Streamlit UI, экспорт, деплой
 ```
 
-Каждый модуль — своя папка в `/modules/`, один человек = один модуль.
-Контракты между модулями зафиксированы как JSON Schema (draft-07) в `/schemas/` —
-**это единственное, что нельзя менять в одиночку** без согласования с соседними модулями.
-
 | Модуль | Папка | Вход | Выход |
 |---|---|---|---|
-| ingestion | [`modules/ingestion`](modules/ingestion) | путь к файлу | [`document.schema.json`](schemas/document.schema.json) |
+| ingestion | [`modules/ingestion`](modules/ingestion) | путь к файлу/папке | [`document.schema.json`](schemas/document.schema.json) |
 | rag_core | [`modules/rag_core`](modules/rag_core) | query + документы | [`retrieval_result.schema.json`](schemas/retrieval_result.schema.json) |
 | hypothesis_gen | [`modules/hypothesis_gen`](modules/hypothesis_gen) | retrieval_result | [`raw_hypotheses.schema.json`](schemas/raw_hypotheses.schema.json) |
 | ranking | [`modules/ranking`](modules/ranking) | raw_hypotheses + constraints | [`ranked_hypotheses.schema.json`](schemas/ranked_hypotheses.schema.json) |
 | orchestrator_ui | [`modules/orchestrator_ui`](modules/orchestrator_ui) | все предыдущие | Streamlit UI, экспорт |
 
-Каждая папка модуля уже содержит **рабочий скелет**, который прямо сейчас (без ключей,
-без готовых соседних модулей) запускается на мок-данных из `/mock_data/` и возвращает
-валидный по соответствующей схеме результат. Подробный TODO-план для каждого модуля —
-в `modules/<module>/README.md`.
+Контракты между модулями зафиксированы как JSON Schema (draft-07) в `/schemas/` —
+**это единственное, что нельзя менять в одиночку** без согласования с соседними модулями.
+Подробности и TODO по каждому модулю — в `modules/<module>/README.md`.
 
-## LLM и эмбеддинги: доступ к Yandex AI Studio закрыт — переходим на локальные модели
+## LLM и эмбеддинги
 
-Изначально план был на Yandex AI Studio (OpenAI-совместимый API), но доступ к нему для
-этого проекта закрыли — модели разворачиваются локально.
+- **Эмбеддинги** (`rag_core`, и `ranking` для оценки новизны) — локальная модель
+  `intfloat/multilingual-e5-small` через `sentence-transformers`, без внешних API.
+  Модель скачивается один раз (~470 МБ) при первом запуске.
+- **Генерация гипотез** (`hypothesis_gen`) — через **Yandex AI Studio**
+  (OpenAI-совместимый API). Нужны `YANDEX_API_KEY` и `YANDEX_FOLDER_ID` в `.env` +
+  `USE_MOCK_LLM=false`. Без ключей модуль работает в мок-режиме (`USE_MOCK_LLM=true`,
+  значение по умолчанию) — пайплайн не падает, просто гипотезы шаблонные.
 
-- **Эмбеддинги для RAG в `rag_core`** — уже переведены на локальную модель
-  `intfloat/multilingual-e5-small` (`sentence-transformers`), без каких-либо внешних API.
-  Эмбеддинги реальной базы знаний посчитаны один раз и закэшированы в
-  `data/embedding_cache.npz` (коммитится в git) — см. [`modules/rag_core/README.md`](modules/rag_core/README.md).
-- **Генерация гипотез в `hypothesis_gen`** — код всё ещё структурно нацелен на Yandex AI
-  Studio (`base_url=https://ai.api.cloud.yandex.net/v1`), но реально это работать не будет —
-  доступа нет. По умолчанию модуль работает в мок-режиме (`USE_MOCK_LLM=true`), это
-  сейчас единственный рабочий режим генерации гипотез. TODO: переключить на локальную
-  модель через Ollama (OpenAI-совместимый сервер на `http://localhost:11434/v1`,
-  минимальные изменения в коде — только `base_url`/имя модели, промпт и парсинг не трогаем).
-- Ключи (если/когда снова понадобятся) конфигурируются через `.env` (см. [`.env.example`](.env.example)).
+## Как запустить
 
-## Быстрый старт
+### 1. Установка
 
 ```bash
+git clone <URL репозитория>
+cd fabrika-gipotez
+python -m venv .venv
+source .venv/Scripts/activate   # Windows git-bash; на PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env   # заполнить ключи, когда будут готовы; по умолчанию не нужны (USE_MOCK_LLM=true)
-
-# прогнать весь пайплайн одной командой на моках
-python scripts/run_pipeline.py
-# или (если есть make): make run-pipeline
-
-# прогнать на реальных файлах (.docx/.pdf уже поддержаны)
-python scripts/run_pipeline.py --files "путь/файл1.docx" "путь/файл2.pdf"
-
-# UI
-streamlit run modules/orchestrator_ui/app.py
-# или: make ui
-
-# все тесты всех модулей
-pytest -v
-# или: make test
 ```
 
-## Таймлайн команды (5 человек, дедлайн через 2.5 дня)
+### 2. OCR (нужен для сканов/фото в ingestion)
 
-**День 1 (сегодня)**
-- Каждый берёт свой модуль из `/modules/`, читает его `README.md` (TODO-список, MVP на случай нехватки времени).
-- Работаем параллельно на мок-данных из `/mock_data/` — не ждём, пока сосед закончит.
-- **Вечерний чекпоинт: сквозная интеграция на моках.** Каждый прогоняет `python scripts/run_pipeline.py` — пайплайн должен пройти end-to-end без ошибок (это уже так на моках прямо сейчас).
+```bash
+# Windows:
+winget install --id UB-Mannheim.TesseractOCR
+# Codespaces/Debian:
+sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
+```
 
-**День 2**
-- Днём: подключаем реальные данные (файлы из `Задача 1/`, реальные ключи Yandex AI Studio) вместо моков. **Чекпоинт: пайплайн проходит на реальных данных.**
-- Вечером: **feature freeze** — новые фичи не берём, только стабилизация и баг-фиксы.
+### 3. Ключи Yandex AI Studio (по желанию — без них тоже работает, в мок-режиме)
 
-**День 3**
-- Стабилизация, деплой UI, запись демо-видео, подготовка презентации.
-- **Сдача до 23:59.**
+```bash
+cp .env.example .env
+```
+В `.env` заполнить `YANDEX_API_KEY`, `YANDEX_FOLDER_ID`, поставить `USE_MOCK_LLM=false`.
+
+### 4. Запуск всего пайплайна одной командой
+
+```bash
+python scripts/run_pipeline.py --target-property "Повысить извлечение золота из упорных сульфидных руд при цианировании на 15%"
+```
+
+По умолчанию используется база знаний из `data/parsed_documents/` (31 документ, уже
+распарсен и закэширован — ничего дополнительно парсить не нужно).
+
+### 5. UI
+
+```bash
+streamlit run modules/orchestrator_ui/app.py
+# если команда "streamlit" не находится (PATH):
+python -m streamlit run modules/orchestrator_ui/app.py
+```
+
+Форма: целевое свойство, ограничения, необязательная загрузка своих файлов (добавятся
+к готовой базе знаний, а не заменят её).
+
+### 6. Тесты
+
+```bash
+pytest -v
+```
+
+### Если видите `HTTP Error 429` от HuggingFace Hub
+
+Это лимит на анонимные запросы (актуально в Codespaces), не ошибка кода — см.
+[`modules/rag_core/README.md`](modules/rag_core/README.md#если-видите-ошибки-http-error-429-от-huggingface-hub).
 
 ## Структура репозитория
 
@@ -109,7 +119,10 @@ pytest -v
   hypothesis_gen/     генерация гипотез через Yandex AI Studio
   ranking/            ранжирование, не-LLM скоринг
   orchestrator_ui/    Streamlit UI, экспорт, деплой
-/mock_data/          мок-примеры для всех 4 шагов пайплайна (видны всем модулям)
+/mock_data/          мок-примеры для всех 4 шагов пайплайна (для тестов, не для демо)
+/data/
+  parsed_documents/   закэшированная база знаний (закоммичена в git)
+  embedding_cache.npz предпосчитанные эмбеддинги для неё (закоммичен в git)
 /scripts/
   run_pipeline.py     сквозной прогон всего пайплайна одной командой
 ```
