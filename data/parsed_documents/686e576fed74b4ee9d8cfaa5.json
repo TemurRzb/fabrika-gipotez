@@ -1,0 +1,28 @@
+{
+  "doc_id": "9d16b889-32bf-4c22-a478-ae3358a997f9",
+  "source_type": "other",
+  "title": "Регламент 1",
+  "authors": [],
+  "date": null,
+  "language": "ru",
+  "full_text": "И СЫ",
+  "sections": [
+    {
+      "heading": "",
+      "text": "И СЫ",
+      "page_range": [
+        1,
+        1
+      ]
+    }
+  ],
+  "tables": [],
+  "metadata": {
+    "file_name": "Регламент 1.png",
+    "file_type": "png",
+    "ocr_confidence": 0.265,
+    "extra": {
+      "ocr_engine": "tesseract"
+    }
+  }
+}
