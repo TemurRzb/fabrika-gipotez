@@ -45,14 +45,22 @@
 валидный по соответствующей схеме результат. Подробный TODO-план для каждого модуля —
 в `modules/<module>/README.md`.
 
-## LLM: только Yandex AI Studio
+## LLM и эмбеддинги: доступ к Yandex AI Studio закрыт — переходим на локальные модели
 
-- Base URL: `https://ai.api.cloud.yandex.net/v1` (OpenAI-совместимый Responses/Completion API).
-- **YandexGPT Lite** — дешёвые точечные задачи (классификация, извлечение полей) в `ingestion`/`rag_core`.
-- **YandexGPT Pro / Alice AI LLM** — единственное место, где нужна сильная модель: генерация гипотез в `hypothesis_gen`.
-- **text-embeddings** — эмбеддинги для RAG в `rag_core` (пока не подключены, TF-IDF заглушка).
-- **Vector Store API** — векторное хранилище, своё не поднимаем.
-- Ключи конфигурируются через `.env` (см. [`.env.example`](.env.example)): `YANDEX_API_KEY`, `YANDEX_FOLDER_ID`. Без ключей `hypothesis_gen` работает в мок-режиме (`USE_MOCK_LLM=true` по умолчанию) — весь пайплайн запускается и без ключей.
+Изначально план был на Yandex AI Studio (OpenAI-совместимый API), но доступ к нему для
+этого проекта закрыли — модели разворачиваются локально.
+
+- **Эмбеддинги для RAG в `rag_core`** — уже переведены на локальную модель
+  `intfloat/multilingual-e5-small` (`sentence-transformers`), без каких-либо внешних API.
+  Эмбеддинги реальной базы знаний посчитаны один раз и закэшированы в
+  `data/embedding_cache.npz` (коммитится в git) — см. [`modules/rag_core/README.md`](modules/rag_core/README.md).
+- **Генерация гипотез в `hypothesis_gen`** — код всё ещё структурно нацелен на Yandex AI
+  Studio (`base_url=https://ai.api.cloud.yandex.net/v1`), но реально это работать не будет —
+  доступа нет. По умолчанию модуль работает в мок-режиме (`USE_MOCK_LLM=true`), это
+  сейчас единственный рабочий режим генерации гипотез. TODO: переключить на локальную
+  модель через Ollama (OpenAI-совместимый сервер на `http://localhost:11434/v1`,
+  минимальные изменения в коде — только `base_url`/имя модели, промпт и парсинг не трогаем).
+- Ключи (если/когда снова понадобятся) конфигурируются через `.env` (см. [`.env.example`](.env.example)).
 
 ## Быстрый старт
 

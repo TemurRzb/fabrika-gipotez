@@ -19,6 +19,9 @@ pypdfium2>=4.30
 # rag_core
 scikit-learn>=1.4
 numpy>=1.26
+# семантические эмбеддинги (полностью локально, без Yandex API — доступ к нему
+# закрыт для этого проекта). Первый запуск скачивает модель ~470 МБ.
+sentence-transformers>=3.0
 
 # hypothesis_gen
 openai>=1.30
