@@ -22,6 +22,10 @@ import os
 import uuid
 from typing import Any
 
+from dotenv import load_dotenv
+
+load_dotenv()  # подхватывает .env из корня репозитория, если он есть; иначе no-op
+
 YANDEX_BASE_URL = "https://ai.api.cloud.yandex.net/v1"
 
 SYSTEM_PROMPT = (
@@ -129,7 +133,10 @@ def _call_yandex_llm(prompt: str) -> str:
 
     api_key = os.environ["YANDEX_API_KEY"]
     folder_id = os.environ["YANDEX_FOLDER_ID"]
-    model_uri = os.environ.get("YANDEX_MODEL_URI", f"gpt://{folder_id}/yandexgpt/latest")
+    # or, а не .get(key, default) — в .env часто остаётся "YANDEX_MODEL_URI="
+    # (переменная существует, но пустая строка), .get() в этом случае вернул
+    # бы "" вместо дефолта.
+    model_uri = os.environ.get("YANDEX_MODEL_URI") or f"gpt://{folder_id}/yandexgpt/latest"
 
     client = OpenAI(api_key=api_key, base_url=YANDEX_BASE_URL)
 
