@@ -248,8 +248,16 @@ if __name__ == "__main__":
     import json
     import sys
 
-    mock_docs_dir = Path(__file__).resolve().parents[2] / "mock_data" / "documents"
-    docs = [json.loads(p.read_text(encoding="utf-8")) for p in mock_docs_dir.glob("*.json")]
+    root_dir = Path(__file__).resolve().parents[2]
+    cached_docs_dir = root_dir / "data" / "parsed_documents"
+    mock_docs_dir = root_dir / "mock_data" / "documents"
+
+    # По умолчанию — реальная база знаний (data/parsed_documents/, уже
+    # закэширована ingest_folder), если она есть; иначе откат на игрушечные
+    # моки, чтобы скрипт не падал на свежем чекауте без реального кэша.
+    docs_dir = cached_docs_dir if cached_docs_dir.exists() and any(cached_docs_dir.glob("*.json")) else mock_docs_dir
+    docs = [json.loads(p.read_text(encoding="utf-8")) for p in docs_dir.glob("*.json")]
+    print(f"[retrieve] документов: {len(docs)} (источник: {docs_dir})", file=sys.stderr)
 
     demo_query = {
         "target_property": "Повысить извлечение золота из лежалых хвостов флотации на 15%",
