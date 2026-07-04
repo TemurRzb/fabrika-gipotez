@@ -32,12 +32,27 @@ from modules.ranking.rank import rank  # noqa: E402
 from modules.rag_core.retrieve import retrieve  # noqa: E402
 
 MOCK_DOCUMENTS_DIR = ROOT_DIR / "mock_data" / "documents"
+CACHED_DOCUMENTS_DIR = ROOT_DIR / "data" / "parsed_documents"
 
 DEFAULT_TARGET_PROPERTY = "Повысить извлечение золота из лежалых хвостов флотации на 15%"
 
 
 def _load_mock_documents() -> list[dict]:
     return [json.loads(p.read_text(encoding="utf-8")) for p in MOCK_DOCUMENTS_DIR.glob("*.json")]
+
+
+def _load_default_documents() -> list[dict]:
+    """Реальный закэшированный корпус (data/parsed_documents/), если он есть,
+    иначе откат на игрушечные моки — чтобы скрипт не падал на свежем чекауте
+    без предпосчитанного кэша."""
+    if CACHED_DOCUMENTS_DIR.exists() and any(CACHED_DOCUMENTS_DIR.glob("*.json")):
+        docs = [json.loads(p.read_text(encoding="utf-8")) for p in CACHED_DOCUMENTS_DIR.glob("*.json")]
+        print(f"Загружено {len(docs)} документов из реального кэша {CACHED_DOCUMENTS_DIR}", file=sys.stderr)
+        return docs
+
+    docs = _load_mock_documents()
+    print(f"Реальный кэш не найден, загружено {len(docs)} мок-документов из {MOCK_DOCUMENTS_DIR}", file=sys.stderr)
+    return docs
 
 
 def _ingest_real_files(file_paths: list[str]) -> list[dict]:
@@ -78,11 +93,10 @@ def main() -> int:
     if args.files:
         documents = _ingest_real_files(args.files)
         if not documents:
-            print("Ни один файл не был успешно распознан, используем mock_data/documents", file=sys.stderr)
-            documents = _load_mock_documents()
+            print("Ни один файл не был успешно распознан, используем документы по умолчанию", file=sys.stderr)
+            documents = _load_default_documents()
     else:
-        documents = _load_mock_documents()
-        print(f"Загружено {len(documents)} мок-документов из {MOCK_DOCUMENTS_DIR}", file=sys.stderr)
+        documents = _load_default_documents()
 
     constraints = {
         "materials": args.materials,
