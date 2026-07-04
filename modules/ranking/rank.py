@@ -5,13 +5,19 @@
 query.constraints в retrieval_result.schema.json).
 Выход: dict, валидный по schemas/ranked_hypotheses.schema.json.
 
-Статус на сейчас (скелет):
-  - novelty     — эмбеддинг-близость: считаем псевдо-эмбеддинги (детерминированные
-                  случайные векторы, засеянные хэшем текста) и берём 1 - средняя
-                  косинусная близость к остальным гипотезам (чем более уникальна
-                  формулировка среди кандидатов — тем выше новизна).
-                  TODO: заменить псевдо-эмбеддинги на реальные эмбеддинги из
-                  rag_core/Yandex text-embeddings, когда rag_core их подключит.
+Статус на сейчас:
+  - novelty     — реальные семантические эмбеддинги (та же модель, что и в rag_core:
+                  intfloat/multilingual-e5-small через sentence-transformers, см.
+                  modules/rag_core/retrieve.get_embedding_model()) + косинусная
+                  близость: 1 - средняя близость к остальным гипотезам в батче
+                  (чем более уникальна формулировка среди кандидатов по смыслу —
+                  тем выше новизна). Раньше здесь был хэш-based шум без всякого
+                  отношения к смыслу текста — заменили, как только в rag_core
+                  появились настоящие эмбеддинги.
+                  Задача симметричная (гипотеза vs гипотеза, не запрос vs документ),
+                  поэтому оба текста кодируются с префиксом "query: " — так
+                  рекомендует сама модель E5 для симметричных задач (в отличие от
+                  retrieve(), где документы кодируются с "passage: ").
   - feasibility — rule-based: доля материалов/оборудования из constraints,
                   упомянутых в тексте гипотезы.
   - expected_value — rule-based: максимальный процент, найденный в target_property_impact.
@@ -22,11 +28,12 @@ query.constraints в retrieval_result.schema.json).
 """
 from __future__ import annotations
 
-import hashlib
 import re
 from typing import Any
 
 import numpy as np
+
+from modules.rag_core.retrieve import get_embedding_model
 
 WEIGHTS = {"novelty": 0.25, "feasibility": 0.3, "expected_value": 0.3, "risk_inverse": 0.15}
 
@@ -34,17 +41,6 @@ RISK_KEYWORDS = [
     "патент", "автоклав", "капитальн", "лицензи", "дорог", "регламент",
     "цианид", "давлени", "новое оборудование",
 ]
-
-EMBEDDING_DIM = 64
-
-
-def _pseudo_embedding(text: str) -> np.ndarray:
-    """Детерминированный псевдо-эмбеддинг на основе хэша текста.
-    TODO: заменить на реальные эмбеддинги (Yandex text-embeddings через rag_core)."""
-    seed = int(hashlib.sha256(text.encode("utf-8")).hexdigest(), 16) % (2**32)
-    rng = np.random.default_rng(seed)
-    vector = rng.normal(size=EMBEDDING_DIM)
-    return vector / np.linalg.norm(vector)
 
 
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
@@ -55,7 +51,14 @@ def _compute_novelty_scores(hypotheses: list[dict[str, Any]]) -> dict[str, float
     if len(hypotheses) <= 1:
         return {h["hyp_id"]: 0.7 for h in hypotheses}
 
-    embeddings = {h["hyp_id"]: _pseudo_embedding(h["statement"]) for h in hypotheses}
+    model = get_embedding_model()
+    # Симметричная задача сравнения гипотез друг с другом — по рекомендации E5
+    # для таких задач оба сравниваемых текста кодируются с префиксом "query: ".
+    vectors = model.encode(
+        [f"query: {h['statement']}" for h in hypotheses], normalize_embeddings=True
+    )
+    embeddings = {h["hyp_id"]: vectors[i] for i, h in enumerate(hypotheses)}
+
     novelty_scores: dict[str, float] = {}
     for h in hypotheses:
         this_id = h["hyp_id"]

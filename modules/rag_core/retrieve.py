@@ -83,6 +83,14 @@ def _get_model() -> SentenceTransformer:
     return _model
 
 
+def get_embedding_model() -> SentenceTransformer:
+    """Публичный доступ к той же модели эмбеддингов, что использует retrieve() —
+    переиспользуется в modules/ranking для оценки семантической новизны гипотез
+    (вместо хэш-based псевдо-эмбеддингов). Один и тот же процесс -> одна и та же
+    загруженная модель, повторной загрузки не происходит."""
+    return _get_model()
+
+
 def _new_id() -> str:
     return str(uuid.uuid4())
 
