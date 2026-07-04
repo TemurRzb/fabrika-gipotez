@@ -47,6 +47,12 @@ _DEFAULT_CACHE_DIR = "data/parsed_documents"
 # Порог: если на странице pdf извлечено меньше символов текста, чем это значение,
 # считаем страницу сканом/фото (а не набранным текстом) и запускаем OCR.
 _MIN_TEXT_CHARS_PER_PAGE = 20
+# Порог: если доля символов с нулевой шириной глифа (x1-x0 ~ 0) на странице
+# выше этого значения, считаем ширины глифов в pdf битыми — обычная
+# кластеризация pdfplumber в слова в этом случае переставляет буквы местами
+# (см. README.md модуля, раздел про известные проблемы pdf). В этом случае
+# текст восстанавливается напрямую из порядка символов в потоке pdf.
+_ZERO_WIDTH_GLYPH_RATIO_THRESHOLD = 0.5
 # DPI рендеринга страницы pdf в изображение перед OCR — компромисс между
 # качеством распознавания и скоростью.
 _PDF_OCR_RESOLUTION = 200
@@ -149,15 +155,54 @@ def _ingest_docx(file_path: Path) -> dict[str, Any]:
     }
 
 
+def _zero_width_glyph_ratio(chars: list[dict[str, Any]]) -> float:
+    if not chars:
+        return 0.0
+    zero_width_count = sum(1 for c in chars if (c["x1"] - c["x0"]) < 0.01)
+    return zero_width_count / len(chars)
+
+
+def _reconstruct_text_from_chars(chars: list[dict[str, Any]]) -> str:
+    """Собирает текст напрямую из символов в исходном порядке потока pdf,
+    группируя по строкам (координата top), без пословной кластеризации
+    pdfplumber. Обходной путь для pdf с битыми метаданными ширины глифов —
+    см. _ZERO_WIDTH_GLYPH_RATIO_THRESHOLD выше."""
+    lines: list[str] = []
+    current_top: float | None = None
+    current_line: list[str] = []
+    for c in chars:
+        top_rounded = round(c["top"])
+        if current_top is None or abs(top_rounded - current_top) > 2:
+            if current_line:
+                lines.append("".join(current_line).strip())
+            current_line = []
+            current_top = top_rounded
+        current_line.append(c["text"])
+    if current_line:
+        lines.append("".join(current_line).strip())
+    return "\n".join(line for line in lines if line)
+
+
 def _ingest_pdf(file_path: Path, max_pages: int | None = None) -> dict[str, Any]:
     sections: list[dict[str, Any]] = []
     tables: list[dict[str, Any]] = []
     ocr_confidences: list[float] = []
+    raw_char_pages = 0
 
     with pdfplumber.open(str(file_path)) as pdf:
         pages = pdf.pages if max_pages is None else pdf.pages[:max_pages]
         for page_number, page in enumerate(pages, start=1):
-            text = (page.extract_text() or "").strip()
+            chars = page.chars
+            if chars and _zero_width_glyph_ratio(chars) >= _ZERO_WIDTH_GLYPH_RATIO_THRESHOLD:
+                # Битые метаданные ширины глифов (x1-x0 ~ 0 у большинства
+                # символов) ломают обычную кластеризацию pdfplumber в слова —
+                # буквы внутри слов переставляются местами. Порядок символов
+                # в самом потоке pdf при этом корректный, поэтому просто
+                # собираем текст из него напрямую, без пересортировки.
+                text = _reconstruct_text_from_chars(chars)
+                raw_char_pages += 1
+            else:
+                text = (page.extract_text() or "").strip()
 
             if len(text) < _MIN_TEXT_CHARS_PER_PAGE:
                 # Текстового слоя почти нет — вероятно, страница это фото/скан
@@ -202,7 +247,11 @@ def _ingest_pdf(file_path: Path, max_pages: int | None = None) -> dict[str, Any]
             "file_name": file_path.name,
             "file_type": "pdf",
             "ocr_confidence": avg_ocr_confidence,
-            "extra": {"pages_total": len(sections), "ocr_pages": len(ocr_confidences)},
+            "extra": {
+                "pages_total": len(sections),
+                "ocr_pages": len(ocr_confidences),
+                "raw_char_pages": raw_char_pages,
+            },
         },
     }
 

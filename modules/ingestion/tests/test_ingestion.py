@@ -10,7 +10,12 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 from reportlab.pdfgen import canvas
 
-from modules.ingestion.ingest import ingest, ingest_folder
+from modules.ingestion.ingest import (
+    _reconstruct_text_from_chars,
+    _zero_width_glyph_ratio,
+    ingest,
+    ingest_folder,
+)
 from modules.rag_core.retrieve import retrieve
 from schemas.validate_schema import validate
 
@@ -183,3 +188,30 @@ def test_ingest_folder_output_feeds_rag_core_without_errors(tmp_path):
 
     validate(retrieval_result, "retrieval_result")
     assert len(retrieval_result["retrieved_chunks"]) > 0
+
+
+def _make_char(text, x0, x1, top):
+    return {"text": text, "x0": x0, "x1": x1, "top": top}
+
+
+def test_zero_width_glyph_ratio_detects_broken_font_metrics():
+    # Реальный случай: некоторые старые сканированные pdf (см. README, раздел
+    # "Известные проблемы pdf") хранят битые метаданные ширины глифов — у
+    # большинства символов x1-x0 ~ 0, из-за чего pdfplumber переставляет буквы
+    # местами при обычной кластеризации в слова.
+    broken_chars = [_make_char(c, 10.0, 10.0, 5.0) for c in "тест"]
+    assert _zero_width_glyph_ratio(broken_chars) == 1.0
+
+    normal_chars = [_make_char(c, float(i), float(i) + 5.0, 5.0) for i, c in enumerate("тест")]
+    assert _zero_width_glyph_ratio(normal_chars) == 0.0
+
+    assert _zero_width_glyph_ratio([]) == 0.0
+
+
+def test_reconstruct_text_from_chars_preserves_stream_order_by_line():
+    chars = [_make_char(c, float(i), float(i), 10.0) for i, c in enumerate("привет")]
+    chars += [_make_char(c, float(i), float(i), 30.0) for i, c in enumerate("мир")]
+
+    text = _reconstruct_text_from_chars(chars)
+
+    assert text == "привет\nмир"
