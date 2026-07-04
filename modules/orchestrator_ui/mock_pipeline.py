@@ -26,12 +26,29 @@ from modules.rag_core.retrieve import retrieve
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 MOCK_DOCUMENTS_DIR = ROOT_DIR / "mock_data" / "documents"
+CACHED_DOCUMENTS_DIR = ROOT_DIR / "data" / "parsed_documents"
 
 
 def load_mock_documents() -> list[dict[str, Any]]:
-    """Загружает мок-документы из mock_data/documents (используется, когда
-    пользователь не загрузил свои файлы)."""
+    """Загружает игрушечные мок-документы из mock_data/documents — подстраховка
+    на случай, если реального закэшированного кэша (см. load_cached_documents)
+    ещё нет в этом окружении."""
     return [json.loads(p.read_text(encoding="utf-8")) for p in MOCK_DOCUMENTS_DIR.glob("*.json")]
+
+
+def load_cached_documents() -> list[dict[str, Any]]:
+    """Загружает реальные документы, заранее распарсенные ingest_folder() и
+    закэшированные в data/parsed_documents/ (см. modules/ingestion/README.md).
+    Возвращает пустой список, если кэша ещё нет — тогда run_pipeline
+    откатывается на load_mock_documents()."""
+    if not CACHED_DOCUMENTS_DIR.exists():
+        return []
+    return [json.loads(p.read_text(encoding="utf-8")) for p in CACHED_DOCUMENTS_DIR.glob("*.json")]
+
+
+def load_default_documents() -> list[dict[str, Any]]:
+    """База знаний по умолчанию: реальный кэш, если он есть, иначе игрушечные моки."""
+    return load_cached_documents() or load_mock_documents()
 
 
 def ingest_uploaded_files(file_paths: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
@@ -57,10 +74,11 @@ def run_pipeline(
     """Прогоняет весь пайплайн rag_core -> hypothesis_gen -> ranking.
 
     documents: список документов (document.schema.json). Если None — берём
-    mock_data/documents (демо-режим без загрузки файлов).
+    load_default_documents() (реальный кэш data/parsed_documents/, либо
+    mock_data/documents, если кэша ещё нет).
     """
     if documents is None:
-        documents = load_mock_documents()
+        documents = load_default_documents()
 
     query = {"target_property": target_property, "constraints": constraints}
     retrieval_result = retrieve(query, documents)

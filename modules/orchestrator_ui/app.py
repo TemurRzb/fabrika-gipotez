@@ -20,7 +20,11 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from modules.orchestrator_ui.mock_pipeline import ingest_uploaded_files, run_pipeline  # noqa: E402
+from modules.orchestrator_ui.mock_pipeline import (  # noqa: E402
+    ingest_uploaded_files,
+    load_default_documents,
+    run_pipeline,
+)
 
 st.set_page_config(page_title="Фабрика гипотез", layout="wide")
 st.title("Фабрика гипотез")
@@ -44,7 +48,8 @@ with st.form("hypothesis_form"):
         regulatory = st.text_area("Регуляторные ограничения (по одному на строку)", value="")
 
     uploaded_files = st.file_uploader(
-        "Файлы базы знаний (.docx, .pdf) — необязательно, без загрузки используются мок-документы",
+        "Дополнительные файлы базы знаний (.docx, .pdf, .xlsx, .png/.jpg) — "
+        "необязательно, добавятся к уже готовой базе знаний",
         type=["docx", "pdf", "xlsx", "png", "jpg"],
         accept_multiple_files=True,
     )
@@ -59,7 +64,11 @@ if submitted:
         "regulatory": [line.strip() for line in regulatory.splitlines() if line.strip()],
     }
 
-    documents = None
+    # База знаний по умолчанию: реальный кэш data/parsed_documents/ (уже
+    # распарсенные материалы задачи), либо mock_data/documents в подстраховку,
+    # если кэша ещё нет в этом окружении.
+    documents = load_default_documents()
+
     if uploaded_files:
         with tempfile.TemporaryDirectory() as tmp_dir:
             saved_paths = []
@@ -68,13 +77,18 @@ if submitted:
                 tmp_path.write_bytes(uploaded_file.getvalue())
                 saved_paths.append(str(tmp_path))
 
-            documents, warnings = ingest_uploaded_files(saved_paths)
+            uploaded_documents, warnings = ingest_uploaded_files(saved_paths)
             for warning in warnings:
                 st.warning(warning)
 
-            if not documents:
-                st.info("Ни один файл не был успешно распознан — используются мок-документы.")
-                documents = None
+            if uploaded_documents:
+                documents = documents + uploaded_documents
+                st.success(
+                    f"Добавлено {len(uploaded_documents)} загруженных документов "
+                    f"к базе знаний ({len(documents)} всего)."
+                )
+            else:
+                st.info("Ни один загруженный файл не был успешно распознан — используется существующая база знаний.")
 
     with st.spinner("Запускаю пайплайн: retrieval -> генерация гипотез -> ранжирование..."):
         ranked_result = run_pipeline(target_property, constraints, documents)
